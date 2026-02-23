@@ -1,0 +1,5 @@
+{
+  "name": "Gemini Image Generator",
+  "description": "Generate images using the Gemini API and display them.",
+  "requestFramePermissions": []
+}
