@@ -1,29 +1,49 @@
-import express from "express";
-import { createServer as createViteServer } from "vite";
-import dotenv from "dotenv";
+import { google } from "googleapis";
+import { VercelRequest, VercelResponse } from "@vercel/node";
+import cookieParser from "cookie-parser";
 
-dotenv.config();
+const oauth2Client = new google.auth.OAuth2(
+  process.env.GOOGLE_CLIENT_ID,
+  process.env.GOOGLE_CLIENT_SECRET,
+  `${process.env.APP_URL}/api/auth/google/callback`
+);
 
-const app = express();
-const PORT = 3000;
+// We need to use a custom middleware for cookie-parser in Vercel functions
+const parseCookies = (handler: Function) => (
+  req: VercelRequest,
+  res: VercelResponse
+) => {
+  cookieParser()(req as any, res as any, () => handler(req, res));
+};
 
-app.use(express.json({ limit: '10mb' }));
+async function callbackHandler(req: VercelRequest, res: VercelResponse) {
+  const { code } = req.query;
+  try {
+    const { tokens } = await oauth2Client.getToken(code as string);
+    
+    // Set cookie using res.setHeader for Vercel functions
+    const cookieValue = JSON.stringify(tokens);
+    res.setHeader('Set-Cookie', `google_tokens=${encodeURIComponent(cookieValue)}; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=${30 * 24 * 60 * 60}`);
 
-// Vite middleware for development
-async function startServer() {
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else {
-    app.use(express.static("dist"));
+    res.send(`
+      <html>
+        <body>
+          <script>
+            if (window.opener) {
+              window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS' }, '*');
+              window.close();
+            } else {
+              window.location.href = '/';
+            }
+          </script>
+          <p>Authentication successful. This window should close automatically.</p>
+        </body>
+      </html>
+    `);
+  } catch (error) {
+    console.error("Error exchanging code:", error);
+    res.status(500).send("Authentication failed");
   }
-
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
 }
 
-startServer();
+export default parseCookies(callbackHandler);
